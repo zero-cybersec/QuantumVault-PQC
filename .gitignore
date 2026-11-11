@@ -1,1 +1,24 @@
+# liboqs source (system installation is used)
 /third_party/liboqs/
+
+# Rust build artifacts
+/target/
+
+# Environment files
+.env
+.env.*
+
+# Python virtual environment
+.venv/
+venv/
+
+# IDE files
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+Thumbs.db
