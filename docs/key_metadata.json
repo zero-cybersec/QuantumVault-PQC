@@ -1,0 +1,8 @@
+{
+  "key_id": "unique-key-id",
+  "algorithm": "ML-KEM-768",
+  "key_type": "keypair",
+  "created_at": "2026-11-11T00:00:00Z",
+  "storage_path": "secure/keys/",
+  "status": "active"
+}
