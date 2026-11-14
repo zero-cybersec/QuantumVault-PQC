@@ -1,3 +1,4 @@
+pub mod storage;
 // QuantumVault-PQC Key Management Module
 
 #[derive(Debug, Clone, PartialEq)]
