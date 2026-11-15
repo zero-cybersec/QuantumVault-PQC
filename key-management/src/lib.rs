@@ -1,7 +1,7 @@
 pub mod storage;
 // QuantumVault-PQC Key Management Module
-
-#[derive(Debug, Clone, PartialEq)]
+use serde::{Serialize, Deserialize};
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyMetadata {
     pub key_id: String,
     pub algorithm: String,
