@@ -24,3 +24,4 @@ venv/
 Thumbs.db
 /crypto-engine/kem_keygen
 /crypto-engine/kem_encaps_test
+/crypto-engine/kem_aead_test
