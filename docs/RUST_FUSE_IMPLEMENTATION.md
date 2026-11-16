@@ -1,42 +1,61 @@
-# Rust FUSE Hello World Filesystem
+# QuantumVault-PQC — Rust FUSE Filesystem
 
-## Objective
-Implement a basic Hello World filesystem using Rust and FUSE.
+## 1. Objective
+Implement a read-write virtual filesystem using Rust and FUSE.
 
-## Environment
-- Rust: 1.100.0
-- Cargo: 1.100.0
-- FUSE3: 3.14.0
-- fuser: 0.18.0
-- libc: 0.2.191
+## 2. Implemented Features
+- Virtual file creation using the FUSE create operation.
+- Dynamic directory listing using readdir.
+- File lookup and metadata retrieval.
+- File reading and writing.
+- File truncation and metadata updates using setattr.
+- In-memory file storage protected by a Mutex.
+- Duplicate filename validation.
+- File permissions and timestamp handling.
 
-## Implementation
-- Initialized a Rust binary project using Cargo.
-- Integrated fuser and libc dependencies.
-- Implemented the FUSE Filesystem trait.
-- Created a root directory.
-- Created a virtual read-only file named hello.txt.
-- Implemented lookup, getattr, readdir and read operations.
-- Configured the filesystem mount structure.
+## 3. Unit Testing
+Seven unit tests were executed:
 
-## Testing Results
+- Virtual file creation
+- Duplicate file creation
+- File write and read
+- File listing and lookup
+- File metadata
+- Invalid filename
+- Write at offset
 
-| Test | Result |
-|---|---|
-| cargo fmt | Passed |
-| cargo check | Passed |
-| cargo build | Passed |
-| FUSE mount | Passed |
-| Directory listing | Passed |
-| Virtual file reading | Passed |
-| FUSE unmount | Passed |
-| Unmount verification | Passed |
+Result: 7 passed, 0 failed.
 
-## Hello World Output
+## 4. Build Verification
+The following commands completed successfully:
 
-Hello World from Rust FUSE!
+- cargo fmt
+- cargo check
+- cargo test
+- cargo build
 
-## Conclusion
-Successfully implemented, compiled, mounted and tested
-a basic Rust FUSE Hello World filesystem.
-The filesystem was successfully unmounted after testing.
+## 5. FUSE Integration Testing
+Mounted the filesystem at /tmp/quantumvault-mnt.
+
+Verified operations:
+- touch: virtual file creation
+- echo: writing file contents
+- cat: reading file contents
+- ls -la: directory listing
+- stat: file metadata
+
+Test file: test.txt
+Expected and actual content: QuantumVault Rust FUSE Test
+File size: 28 bytes
+Permissions: 0644
+Inode: 2
+
+All listed integration checks passed.
+
+The filesystem was successfully unmounted using fusermount3.
+
+## 6. Storage Limitation
+Files are stored in memory. They are not persistent and are lost when the filesystem process terminates or is unmounted.
+
+## 7. Conclusion
+Virtual file creation, listing, reading, writing, metadata handling, unit testing, and live FUSE integration testing were completed successfully.

@@ -1,105 +1,358 @@
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
-use std::time::{Duration, UNIX_EPOCH};
+use std::sync::Mutex;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use fuser::{
-    Errno, FileAttr, FileHandle, FileType, Filesystem, INodeNo, LockOwner, MountOption, OpenFlags,
-    ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, Request,
+    Errno, FileAttr, FileHandle, FileType, Filesystem, FopenFlags, INodeNo, LockOwner, MountOption,
+    OpenFlags, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen,
+    ReplyWrite, Request, TimeOrNow, WriteFlags,
 };
 
 const TTL: Duration = Duration::from_secs(1);
-const HELLO: &[u8] = b"Hello World from Rust FUSE!\n";
+const ROOT_INODE: u64 = 1;
 
-struct HelloFS;
-
-fn get_attr(ino: INodeNo) -> Option<FileAttr> {
-    let uid = unsafe { libc::getuid() };
-    let gid = unsafe { libc::getgid() };
-
-    let attr = match ino.0 {
-        1 => FileAttr {
-            ino: INodeNo(1),
-            size: 0,
-            blocks: 0,
-            atime: UNIX_EPOCH,
-            mtime: UNIX_EPOCH,
-            ctime: UNIX_EPOCH,
-            crtime: UNIX_EPOCH,
-            kind: FileType::Directory,
-            perm: 0o755,
-            nlink: 2,
-            uid,
-            gid,
-            rdev: 0,
-            blksize: 512,
-            flags: 0,
-        },
-
-        2 => FileAttr {
-            ino: INodeNo(2),
-            size: HELLO.len() as u64,
-            blocks: 1,
-            atime: UNIX_EPOCH,
-            mtime: UNIX_EPOCH,
-            ctime: UNIX_EPOCH,
-            crtime: UNIX_EPOCH,
-            kind: FileType::RegularFile,
-            perm: 0o444,
-            nlink: 1,
-            uid,
-            gid,
-            rdev: 0,
-            blksize: 512,
-            flags: 0,
-        },
-
-        _ => return None,
-    };
-
-    Some(attr)
+struct VirtualFile {
+    name: String,
+    data: Vec<u8>,
+    mode: u16,
+    uid: u32,
+    gid: u32,
+    created: SystemTime,
+    modified: SystemTime,
+    accessed: SystemTime,
 }
 
-impl Filesystem for HelloFS {
+struct FsState {
+    files: BTreeMap<u64, VirtualFile>,
+    next_inode: u64,
+}
+
+impl FsState {
+    fn new() -> Self {
+        Self {
+            files: BTreeMap::new(),
+            next_inode: 2,
+        }
+    }
+
+    fn create_file(&mut self, name: &str, mode: u16, uid: u32, gid: u32) -> Result<u64, Errno> {
+        if name.is_empty() || name == "." || name == ".." || name.contains('/') {
+            return Err(Errno::EINVAL);
+        }
+
+        if self.files.values().any(|file| file.name == name) {
+            return Err(Errno::EEXIST);
+        }
+
+        let ino = self.next_inode;
+        self.next_inode += 1;
+
+        let now = SystemTime::now();
+
+        self.files.insert(
+            ino,
+            VirtualFile {
+                name: name.to_string(),
+                data: Vec::new(),
+                mode,
+                uid,
+                gid,
+                created: now,
+                modified: now,
+                accessed: now,
+            },
+        );
+
+        Ok(ino)
+    }
+
+    fn lookup_name(&self, name: &str) -> Option<u64> {
+        self.files
+            .iter()
+            .find(|(_, file)| file.name == name)
+            .map(|(ino, _)| *ino)
+    }
+
+    fn write_file(&mut self, ino: u64, offset: u64, data: &[u8]) -> Result<usize, Errno> {
+        let file = self.files.get_mut(&ino).ok_or(Errno::ENOENT)?;
+
+        let start = usize::try_from(offset).map_err(|_| Errno::EINVAL)?;
+        let end = start.checked_add(data.len()).ok_or(Errno::EINVAL)?;
+
+        if data.is_empty() {
+            return Ok(0);
+        }
+
+        file.data.resize(file.data.len().max(end), 0);
+        file.data[start..end].copy_from_slice(data);
+        file.modified = SystemTime::now();
+
+        Ok(data.len())
+    }
+
+    fn read_file(&self, ino: u64, offset: u64, size: u32) -> Result<Vec<u8>, Errno> {
+        let file = self.files.get(&ino).ok_or(Errno::ENOENT)?;
+
+        let start = usize::try_from(offset).map_err(|_| Errno::EINVAL)?;
+
+        if start >= file.data.len() {
+            return Ok(Vec::new());
+        }
+
+        let end = start.saturating_add(size as usize).min(file.data.len());
+
+        Ok(file.data[start..end].to_vec())
+    }
+
+    fn file_attr(&self, ino: u64) -> Option<FileAttr> {
+        let file = self.files.get(&ino)?;
+        let size = file.data.len() as u64;
+
+        Some(FileAttr {
+            ino: INodeNo(ino),
+            size,
+            blocks: size.div_ceil(512),
+            atime: file.accessed,
+            mtime: file.modified,
+            ctime: file.modified,
+            crtime: file.created,
+            kind: FileType::RegularFile,
+            perm: file.mode,
+            nlink: 1,
+            uid: file.uid,
+            gid: file.gid,
+            rdev: 0,
+            blksize: 512,
+            flags: 0,
+        })
+    }
+}
+
+struct VirtualFS {
+    state: Mutex<FsState>,
+}
+
+impl VirtualFS {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(FsState::new()),
+        }
+    }
+}
+
+fn root_attr() -> FileAttr {
+    FileAttr {
+        ino: INodeNo(ROOT_INODE),
+        size: 0,
+        blocks: 0,
+        atime: UNIX_EPOCH,
+        mtime: UNIX_EPOCH,
+        ctime: UNIX_EPOCH,
+        crtime: UNIX_EPOCH,
+        kind: FileType::Directory,
+        perm: 0o755,
+        nlink: 2,
+        uid: unsafe { libc::getuid() },
+        gid: unsafe { libc::getgid() },
+        rdev: 0,
+        blksize: 512,
+        flags: 0,
+    }
+}
+
+impl Filesystem for VirtualFS {
     fn lookup(&self, _req: &Request, parent: INodeNo, name: &OsStr, reply: ReplyEntry) {
-        if parent == INodeNo(1) && name == OsStr::new("hello.txt") {
-            reply.entry(&TTL, &get_attr(INodeNo(2)).unwrap(), fuser::Generation(0));
+        if parent.0 != ROOT_INODE {
+            reply.error(Errno::ENOENT);
+            return;
+        }
+
+        let Some(name) = name.to_str() else {
+            reply.error(Errno::EINVAL);
+            return;
+        };
+
+        let state = match self.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                reply.error(Errno::EIO);
+                return;
+            }
+        };
+
+        if let Some(ino) = state.lookup_name(name) {
+            let attr = state.file_attr(ino).unwrap();
+            reply.entry(&TTL, &attr, fuser::Generation(0));
         } else {
             reply.error(Errno::ENOENT);
         }
     }
 
     fn getattr(&self, _req: &Request, ino: INodeNo, _fh: Option<FileHandle>, reply: ReplyAttr) {
-        match get_attr(ino) {
+        if ino.0 == ROOT_INODE {
+            reply.attr(&TTL, &root_attr());
+            return;
+        }
+
+        let state = match self.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                reply.error(Errno::EIO);
+                return;
+            }
+        };
+
+        match state.file_attr(ino.0) {
             Some(attr) => reply.attr(&TTL, &attr),
             None => reply.error(Errno::ENOENT),
         }
     }
 
-    fn readdir(
+    fn setattr(
         &self,
         _req: &Request,
         ino: INodeNo,
-        _fh: FileHandle,
-        offset: u64,
-        mut reply: ReplyDirectory,
+        mode: Option<u32>,
+        uid: Option<u32>,
+        gid: Option<u32>,
+        size: Option<u64>,
+        atime: Option<TimeOrNow>,
+        mtime: Option<TimeOrNow>,
+        _ctime: Option<SystemTime>,
+        _fh: Option<FileHandle>,
+        _crtime: Option<SystemTime>,
+        _chgtime: Option<SystemTime>,
+        _bkuptime: Option<SystemTime>,
+        _flags: Option<fuser::BsdFileFlags>,
+        reply: ReplyAttr,
     ) {
-        if ino != INodeNo(1) {
+        if ino.0 == ROOT_INODE {
+            reply.error(Errno::EISDIR);
+            return;
+        }
+
+        let mut state = match self.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                reply.error(Errno::EIO);
+                return;
+            }
+        };
+
+        {
+            let Some(file) = state.files.get_mut(&ino.0) else {
+                reply.error(Errno::ENOENT);
+                return;
+            };
+
+            if let Some(mode) = mode {
+                file.mode = (mode & 0o7777) as u16;
+            }
+
+            if let Some(uid) = uid {
+                file.uid = uid;
+            }
+
+            if let Some(gid) = gid {
+                file.gid = gid;
+            }
+
+            if let Some(size) = size {
+                let Ok(new_size) = usize::try_from(size) else {
+                    reply.error(Errno::EINVAL);
+                    return;
+                };
+
+                file.data.resize(new_size, 0);
+            }
+
+            if let Some(atime) = atime {
+                file.accessed = match atime {
+                    TimeOrNow::SpecificTime(time) => time,
+                    TimeOrNow::Now => SystemTime::now(),
+                };
+            }
+
+            if let Some(mtime) = mtime {
+                file.modified = match mtime {
+                    TimeOrNow::SpecificTime(time) => time,
+                    TimeOrNow::Now => SystemTime::now(),
+                };
+            }
+        }
+
+        match state.file_attr(ino.0) {
+            Some(attr) => reply.attr(&TTL, &attr),
+            None => reply.error(Errno::ENOENT),
+        }
+    }
+
+    fn create(
+        &self,
+        req: &Request,
+        parent: INodeNo,
+        name: &OsStr,
+        mode: u32,
+        umask: u32,
+        _flags: i32,
+        reply: ReplyCreate,
+    ) {
+        if parent.0 != ROOT_INODE {
             reply.error(Errno::ENOENT);
             return;
         }
 
-        let entries = [
-            (INodeNo(1), FileType::Directory, "."),
-            (INodeNo(1), FileType::Directory, ".."),
-            (INodeNo(2), FileType::RegularFile, "hello.txt"),
-        ];
+        let Some(name) = name.to_str() else {
+            reply.error(Errno::EINVAL);
+            return;
+        };
 
-        for (i, entry) in entries.iter().enumerate().skip(offset as usize) {
-            if reply.add(entry.0, (i + 1) as u64, entry.1, entry.2) {
-                break;
+        let mut state = match self.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                reply.error(Errno::EIO);
+                return;
             }
+        };
+
+        let permissions = (mode & !umask & 0o7777) as u16;
+
+        match state.create_file(name, permissions, req.uid(), req.gid()) {
+            Ok(ino) => {
+                let attr = state.file_attr(ino).unwrap();
+
+                reply.created(
+                    &TTL,
+                    &attr,
+                    fuser::Generation(0),
+                    FileHandle(0),
+                    FopenFlags::empty(),
+                );
+            }
+            Err(err) => reply.error(err),
+        }
+    }
+
+    fn open(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
+        if ino.0 == ROOT_INODE {
+            reply.error(Errno::EISDIR);
+            return;
         }
 
-        reply.ok();
+        let state = match self.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                reply.error(Errno::EIO);
+                return;
+            }
+        };
+
+        if state.files.contains_key(&ino.0) {
+            reply.opened(FileHandle(0), FopenFlags::empty());
+        } else {
+            reply.error(Errno::ENOENT);
+        }
     }
 
     fn read(
@@ -113,20 +366,88 @@ impl Filesystem for HelloFS {
         _lock_owner: Option<LockOwner>,
         reply: ReplyData,
     ) {
-        if ino != INodeNo(2) {
-            reply.error(Errno::ENOENT);
+        let mut state = match self.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                reply.error(Errno::EIO);
+                return;
+            }
+        };
+
+        match state.read_file(ino.0, offset, size) {
+            Ok(data) => {
+                if let Some(file) = state.files.get_mut(&ino.0) {
+                    file.accessed = SystemTime::now();
+                }
+                reply.data(&data);
+            }
+            Err(err) => reply.error(err),
+        }
+    }
+
+    fn write(
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        offset: u64,
+        data: &[u8],
+        _write_flags: WriteFlags,
+        _flags: OpenFlags,
+        _lock_owner: Option<LockOwner>,
+        reply: ReplyWrite,
+    ) {
+        let mut state = match self.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                reply.error(Errno::EIO);
+                return;
+            }
+        };
+
+        match state.write_file(ino.0, offset, data) {
+            Ok(size) => reply.written(size as u32),
+            Err(err) => reply.error(err),
+        }
+    }
+
+    fn readdir(
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        _fh: FileHandle,
+        offset: u64,
+        mut reply: ReplyDirectory,
+    ) {
+        if ino.0 != ROOT_INODE {
+            reply.error(Errno::ENOTDIR);
             return;
         }
 
-        let start = offset as usize;
+        let state = match self.state.lock() {
+            Ok(state) => state,
+            Err(_) => {
+                reply.error(Errno::EIO);
+                return;
+            }
+        };
 
-        if start >= HELLO.len() {
-            reply.data(&[]);
-            return;
+        let mut entries = vec![
+            (INodeNo(ROOT_INODE), FileType::Directory, ".".to_string()),
+            (INodeNo(ROOT_INODE), FileType::Directory, "..".to_string()),
+        ];
+
+        for (ino, file) in &state.files {
+            entries.push((INodeNo(*ino), FileType::RegularFile, file.name.clone()));
         }
 
-        let end = start.saturating_add(size as usize).min(HELLO.len());
-        reply.data(&HELLO[start..end]);
+        for (i, entry) in entries.iter().enumerate().skip(offset as usize) {
+            if reply.add(entry.0, (i + 1) as u64, entry.1, entry.2.as_str()) {
+                break;
+            }
+        }
+
+        reply.ok();
     }
 }
 
@@ -138,11 +459,95 @@ fn main() {
     let mut config = fuser::Config::default();
 
     config.mount_options.extend([
-        MountOption::RO,
-        MountOption::FSName("rust-hello-fs".to_string()),
+        MountOption::RW,
+        MountOption::FSName("quantum-vault".to_string()),
     ]);
 
-    println!("Starting Rust Hello World FUSE filesystem...");
+    println!("Starting QuantumVault virtual filesystem...");
 
-    fuser::mount(HelloFS, mountpoint, &config).expect("Failed to mount FUSE filesystem");
+    fuser::mount(VirtualFS::new(), mountpoint, &config).expect("Failed to mount FUSE filesystem");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_virtual_file_creation() {
+        let mut state = FsState::new();
+        let ino = state.create_file("test.txt", 0o644, 1000, 1000).unwrap();
+
+        assert_eq!(ino, 2);
+        assert!(state.files.contains_key(&ino));
+    }
+
+    #[test]
+    fn test_duplicate_file_creation() {
+        let mut state = FsState::new();
+
+        state.create_file("test.txt", 0o644, 1000, 1000).unwrap();
+
+        assert!(matches!(
+            state.create_file("test.txt", 0o644, 1000, 1000),
+            Err(Errno::EEXIST)
+        ));
+    }
+
+    #[test]
+    fn test_file_write_and_read() {
+        let mut state = FsState::new();
+        let ino = state.create_file("data.txt", 0o644, 1000, 1000).unwrap();
+
+        state.write_file(ino, 0, b"QuantumVault").unwrap();
+
+        assert_eq!(state.read_file(ino, 0, 100).unwrap(), b"QuantumVault");
+    }
+
+    #[test]
+    fn test_file_listing_and_lookup() {
+        let mut state = FsState::new();
+
+        state.create_file("one.txt", 0o644, 1000, 1000).unwrap();
+        state.create_file("two.txt", 0o644, 1000, 1000).unwrap();
+
+        assert_eq!(state.lookup_name("one.txt"), Some(2));
+        assert_eq!(state.lookup_name("two.txt"), Some(3));
+        assert_eq!(state.files.len(), 2);
+    }
+
+    #[test]
+    fn test_file_metadata() {
+        let mut state = FsState::new();
+        let ino = state
+            .create_file("metadata.txt", 0o640, 1000, 1000)
+            .unwrap();
+
+        state.write_file(ino, 0, b"Hello").unwrap();
+
+        let attr = state.file_attr(ino).unwrap();
+
+        assert_eq!(attr.size, 5);
+        assert_eq!(attr.perm, 0o640);
+        assert_eq!(attr.kind, FileType::RegularFile);
+        assert_eq!(attr.uid, 1000);
+        assert_eq!(attr.gid, 1000);
+    }
+
+    #[test]
+    fn test_invalid_filename() {
+        let mut state = FsState::new();
+
+        assert!(state.create_file("../bad.txt", 0o644, 1000, 1000).is_err());
+    }
+
+    #[test]
+    fn test_write_at_offset() {
+        let mut state = FsState::new();
+        let ino = state.create_file("offset.txt", 0o644, 1000, 1000).unwrap();
+
+        state.write_file(ino, 0, b"HelloWorld").unwrap();
+        state.write_file(ino, 5, b"Rust").unwrap();
+
+        assert_eq!(state.read_file(ino, 0, 100).unwrap(), b"HelloRustd");
+    }
 }
