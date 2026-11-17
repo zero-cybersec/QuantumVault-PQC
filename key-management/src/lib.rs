@@ -1,6 +1,6 @@
 pub mod storage;
 // QuantumVault-PQC Key Management Module
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyMetadata {
     pub key_id: String,
@@ -23,24 +23,14 @@ pub enum KeyManagementError {
 
 // Interfaces for key management operations
 pub trait KeyManagement {
-
     // Interface for key generation
-    fn generate_key(
-        &self,
-        algorithm: &str,
-    ) -> Result<KeyMetadata, KeyManagementError>;
+    fn generate_key(&self, algorithm: &str) -> Result<KeyMetadata, KeyManagementError>;
 
     // Interface for retrieving key metadata
-    fn retrieve_key(
-        &self,
-        key_id: &str,
-    ) -> Result<KeyMetadata, KeyManagementError>;
+    fn retrieve_key(&self, key_id: &str) -> Result<KeyMetadata, KeyManagementError>;
 
     // Interface for deleting a key
-    fn delete_key(
-        &self,
-        key_id: &str,
-    ) -> Result<(), KeyManagementError>;
+    fn delete_key(&self, key_id: &str) -> Result<(), KeyManagementError>;
 }
 #[cfg(test)]
 mod tests {
@@ -49,10 +39,7 @@ mod tests {
     struct MockKeyManager;
 
     impl KeyManagement for MockKeyManager {
-        fn generate_key(
-            &self,
-            algorithm: &str,
-        ) -> Result<KeyMetadata, KeyManagementError> {
+        fn generate_key(&self, algorithm: &str) -> Result<KeyMetadata, KeyManagementError> {
             Ok(KeyMetadata {
                 key_id: "test-key-001".to_string(),
                 algorithm: algorithm.to_string(),
@@ -63,10 +50,7 @@ mod tests {
             })
         }
 
-        fn retrieve_key(
-            &self,
-            key_id: &str,
-        ) -> Result<KeyMetadata, KeyManagementError> {
+        fn retrieve_key(&self, key_id: &str) -> Result<KeyMetadata, KeyManagementError> {
             if key_id == "test-key-001" {
                 self.generate_key("ML-KEM-768")
             } else {
@@ -74,10 +58,7 @@ mod tests {
             }
         }
 
-        fn delete_key(
-            &self,
-            key_id: &str,
-        ) -> Result<(), KeyManagementError> {
+        fn delete_key(&self, key_id: &str) -> Result<(), KeyManagementError> {
             if key_id == "test-key-001" {
                 Ok(())
             } else {
@@ -111,3 +92,6 @@ mod tests {
         assert!(manager.retrieve_key("unknown").is_err());
     }
 }
+
+pub mod oqs;
+pub mod service;
