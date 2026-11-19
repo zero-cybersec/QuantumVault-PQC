@@ -166,13 +166,4 @@ TOTAL                        199           0           0         0.241s     100%
 | **2** | `EXIT_INVALID_ARGS` | Pre-execution validation failure, missing argument, bad syntax, or unforced duplicate collision | 33 invalid parameter and collision tests |
 | **4** | `EXIT_NOT_FOUND` | Principal lookup failure (e.g., in `qv identity get non-existent`) | Covered in general identity suite |
 
----
 
-## 6. GitHub Commit Reference
-
-- **Repository**: `quantumvault-cli`
-- **Commit SHA**: `b57978f0def88f402a3a90e2e2ad79a5f414c752`
-- **Short Hash**: `b57978f`
-- **Author**: `NIKHIL NIKHIL <251312011@nitdelhi.ac.in>`
-- **Commit Message**: `test: verify CLI identity creation and input validation`
-- **Branch**: `master` (release `v0.1.5-alpha`)
