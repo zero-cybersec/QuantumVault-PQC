@@ -2,10 +2,19 @@ pub mod storage;
 // QuantumVault-PQC Key Management Module
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KeyType {
+    PublicKey,
+    SecretKey,
+    #[serde(rename = "keypair")]
+    KeyPair,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct KeyMetadata {
     pub key_id: String,
     pub algorithm: String,
-    pub key_type: String,
+    pub key_type: KeyType,
     pub created_at: String,
     pub storage_path: String,
     pub status: String,
@@ -43,7 +52,7 @@ mod tests {
             Ok(KeyMetadata {
                 key_id: "test-key-001".to_string(),
                 algorithm: algorithm.to_string(),
-                key_type: "keypair".to_string(),
+                key_type: KeyType::KeyPair,
                 created_at: "2026-11-13".to_string(),
                 storage_path: "secure/keys/".to_string(),
                 status: "active".to_string(),

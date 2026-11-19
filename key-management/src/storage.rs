@@ -127,7 +127,7 @@ mod tests {
         KeyMetadata {
             key_id: "test-key-001".to_string(),
             algorithm: "ML-KEM-768".to_string(),
-            key_type: "keypair".to_string(),
+            key_type: crate::KeyType::KeyPair,
             created_at: "2026-11-15".to_string(),
             storage_path: "secure/keys/".to_string(),
             status: "active".to_string(),
@@ -180,6 +180,36 @@ mod tests {
         let reopened = KeyStorage::open(&path).unwrap();
         assert!(reopened.retrieve_key("test-key-001").is_ok());
 
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_public_key_storage() {
+        let (storage, path) = test_storage();
+        let mut metadata = sample_metadata();
+        metadata.key_id = "public-key-001".to_string();
+        metadata.key_type = crate::KeyType::PublicKey;
+
+        storage.store_key(metadata).unwrap();
+        assert_eq!(
+            storage.retrieve_key("public-key-001").unwrap().key_type,
+            crate::KeyType::PublicKey
+        );
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn test_secret_key_storage() {
+        let (storage, path) = test_storage();
+        let mut metadata = sample_metadata();
+        metadata.key_id = "secret-key-001".to_string();
+        metadata.key_type = crate::KeyType::SecretKey;
+
+        storage.store_key(metadata).unwrap();
+        assert_eq!(
+            storage.retrieve_key("secret-key-001").unwrap().key_type,
+            crate::KeyType::SecretKey
+        );
         let _ = fs::remove_file(path);
     }
 }

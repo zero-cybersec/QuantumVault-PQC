@@ -46,7 +46,7 @@ impl KeyGenerationService {
         let metadata = KeyMetadata {
             key_id: key_id.clone(),
             algorithm: "ML-KEM-768".to_string(),
-            key_type: "keypair".to_string(),
+            key_type: crate::KeyType::KeyPair,
             created_at: timestamp.to_string(),
             storage_path: "secure/keys/".to_string(),
             status: "active".to_string(),
