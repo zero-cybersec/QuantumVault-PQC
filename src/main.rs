@@ -1,3 +1,6 @@
+mod crypto;
+mod ffi;
+
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::sync::Mutex;
@@ -8,7 +11,6 @@ use fuser::{
     OpenFlags, ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen,
     ReplyWrite, Request, TimeOrNow, WriteFlags,
 };
-
 const TTL: Duration = Duration::from_secs(1);
 const ROOT_INODE: u64 = 1;
 
