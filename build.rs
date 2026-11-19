@@ -1,17 +1,48 @@
 use std::env;
+use std::path::PathBuf;
+use std::process::Command;
+
+fn run(command: &mut Command) {
+    let status = command
+        .status()
+        .expect("Failed to execute native build command");
+
+    assert!(status.success(), "Native build command failed");
+}
 
 fn main() {
-    println!("cargo:rerun-if-env-changed=QUANTUMVAULT_CRYPTO_LIB_DIR");
-    println!("cargo:rerun-if-env-changed=QUANTUMVAULT_CRYPTO_LIB");
+    let source = "native/crypto/quantumvault_crypto.c";
+    let header = "native/crypto/quantumvault_crypto.h";
 
-    if let Ok(lib_dir) = env::var("QUANTUMVAULT_CRYPTO_LIB_DIR") {
-        println!("cargo:rustc-link-search=native={lib_dir}");
+    println!("cargo:rerun-if-changed={source}");
+    println!("cargo:rerun-if-changed={header}");
 
-        let lib_name = env::var("QUANTUMVAULT_CRYPTO_LIB")
-            .unwrap_or_else(|_| "quantumvault_crypto".to_string());
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is not set"));
 
-        println!("cargo:rustc-link-lib=static={lib_name}");
-    }
+    let object_file = out_dir.join("quantumvault_crypto.o");
+    let library_file = out_dir.join("libquantumvault_crypto.a");
 
-    println!("cargo:warning=QuantumVault native crypto linking configured");
+    run(Command::new("cc")
+        .args([
+            "-std=c11",
+            "-Wall",
+            "-Wextra",
+            "-Werror",
+            "-I",
+            "native/crypto",
+            "-c",
+            source,
+            "-o",
+        ])
+        .arg(&object_file));
+
+    run(Command::new("ar")
+        .arg("crs")
+        .arg(&library_file)
+        .arg(&object_file));
+
+    println!("cargo:rustc-link-search=native={}", out_dir.display());
+    println!("cargo:rustc-link-lib=static=quantumvault_crypto");
+
+    println!("cargo:warning=QuantumVault C crypto library compiled and linked");
 }
