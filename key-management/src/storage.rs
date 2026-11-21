@@ -77,6 +77,9 @@ impl KeyStorage {
     }
 
     pub fn retrieve_key(&self, key_id: &str) -> Result<KeyMetadata, KeyManagementError> {
+        if key_id.trim().is_empty() {
+            return Err(KeyManagementError::InvalidMetadata);
+        }
         let keys = self
             .metadata
             .lock()
@@ -196,6 +199,12 @@ mod tests {
             crate::KeyType::PublicKey
         );
         let _ = fs::remove_file(path);
+    }
+    #[test]
+    fn test_empty_key_id_returns_error() {
+        let storage = KeyStorage::open("test_empty_key_id.json").unwrap();
+        let result = storage.retrieve_key("");
+        assert!(matches!(result, Err(KeyManagementError::InvalidMetadata)));
     }
 
     #[test]

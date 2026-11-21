@@ -26,3 +26,10 @@ The Key Management module provides metadata storage and retrieval for cryptograp
 
 ## Implementation Note
 The current JSON storage persists key metadata only. Actual public and secret key bytes require secure storage and integration with the PQC Crypto Engine.
+## Key Access Error Handling
+
+- Empty or blank key IDs return an InvalidMetadata error.
+- Requests for keys that do not exist return a KeyNotFound error.
+- Unavailable crypto engine operations return a CryptoEngineUnavailable error.
+- Storage failures return a StorageError.
+- Error messages do not expose secret key material.
