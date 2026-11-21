@@ -1,0 +1,5 @@
+cargo:rustc-link-search=native=/tmp
+cargo:rustc-link-lib=dylib=quantumvault_crypto
+cargo:rustc-link-lib=dylib=crypto
+cargo:rustc-link-lib=dylib=oqs
+cargo:rerun-if-changed=build.rs
