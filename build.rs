@@ -43,6 +43,7 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", out_dir.display());
     println!("cargo:rustc-link-lib=static=quantumvault_crypto");
+    println!("cargo:rustc-link-lib=crypto");
 
     println!("cargo:warning=QuantumVault C crypto library compiled and linked");
 }

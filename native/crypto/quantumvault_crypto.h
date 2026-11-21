@@ -3,6 +3,10 @@
 
 #include <stddef.h>
 
+#define QV_CRYPTO_NONCE_SIZE 12
+#define QV_CRYPTO_TAG_SIZE 16
+#define QV_CRYPTO_OVERHEAD 28
+
 typedef struct QvCryptoContext QvCryptoContext;
 
 QvCryptoContext *qv_crypto_init(void);

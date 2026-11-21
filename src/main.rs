@@ -1,6 +1,7 @@
 mod crypto;
 mod ffi;
 
+use crate::crypto::{CryptoProvider, FfiCryptoProvider};
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::sync::Mutex;
@@ -16,7 +17,9 @@ const ROOT_INODE: u64 = 1;
 
 struct VirtualFile {
     name: String,
+    // Encrypted bytes are stored here, never plaintext.
     data: Vec<u8>,
+    plaintext_size: usize,
     mode: u16,
     uid: u32,
     gid: u32,
@@ -28,6 +31,7 @@ struct VirtualFile {
 struct FsState {
     files: BTreeMap<u64, VirtualFile>,
     next_inode: u64,
+    crypto: FfiCryptoProvider,
 }
 
 impl FsState {
@@ -35,6 +39,8 @@ impl FsState {
         Self {
             files: BTreeMap::new(),
             next_inode: 2,
+            crypto: FfiCryptoProvider::new()
+                .expect("Failed to initialize QuantumVault crypto backend"),
         }
     }
 
@@ -47,8 +53,10 @@ impl FsState {
             return Err(Errno::EEXIST);
         }
 
+        let encrypted_empty = self.crypto.encrypt(&[]).map_err(|_| Errno::EIO)?;
+
         let ino = self.next_inode;
-        self.next_inode += 1;
+        self.next_inode = self.next_inode.checked_add(1).ok_or(Errno::EIO)?;
 
         let now = SystemTime::now();
 
@@ -56,7 +64,8 @@ impl FsState {
             ino,
             VirtualFile {
                 name: name.to_string(),
-                data: Vec::new(),
+                data: encrypted_empty,
+                plaintext_size: 0,
                 mode,
                 uid,
                 gid,
@@ -77,39 +86,83 @@ impl FsState {
     }
 
     fn write_file(&mut self, ino: u64, offset: u64, data: &[u8]) -> Result<usize, Errno> {
-        let file = self.files.get_mut(&ino).ok_or(Errno::ENOENT)?;
-
         let start = usize::try_from(offset).map_err(|_| Errno::EINVAL)?;
         let end = start.checked_add(data.len()).ok_or(Errno::EINVAL)?;
 
-        if data.is_empty() {
-            return Ok(0);
+        let (mut plaintext, expected_size) = {
+            let file = self.files.get(&ino).ok_or(Errno::ENOENT)?;
+            if data.is_empty() {
+                return Ok(0);
+            }
+
+            let plaintext = self.crypto.decrypt(&file.data).map_err(|_| Errno::EIO)?;
+            (plaintext, file.plaintext_size)
+        };
+
+        if plaintext.len() != expected_size {
+            return Err(Errno::EIO);
         }
 
-        file.data.resize(file.data.len().max(end), 0);
-        file.data[start..end].copy_from_slice(data);
+        plaintext.resize(plaintext.len().max(end), 0);
+        plaintext[start..end].copy_from_slice(data);
+
+        let encrypted = self.crypto.encrypt(&plaintext).map_err(|_| Errno::EIO)?;
+
+        let file = self.files.get_mut(&ino).ok_or(Errno::ENOENT)?;
+        file.data = encrypted;
+        file.plaintext_size = plaintext.len();
         file.modified = SystemTime::now();
 
         Ok(data.len())
     }
 
+    fn resize_file(&mut self, ino: u64, new_size: usize) -> Result<(), Errno> {
+        let (mut plaintext, expected_size) = {
+            let file = self.files.get(&ino).ok_or(Errno::ENOENT)?;
+            let plaintext = self.crypto.decrypt(&file.data).map_err(|_| Errno::EIO)?;
+            (plaintext, file.plaintext_size)
+        };
+
+        if plaintext.len() != expected_size {
+            return Err(Errno::EIO);
+        }
+
+        plaintext.resize(new_size, 0);
+        let encrypted = self.crypto.encrypt(&plaintext).map_err(|_| Errno::EIO)?;
+
+        let file = self.files.get_mut(&ino).ok_or(Errno::ENOENT)?;
+        file.data = encrypted;
+        file.plaintext_size = new_size;
+        file.modified = SystemTime::now();
+
+        Ok(())
+    }
+
     fn read_file(&self, ino: u64, offset: u64, size: u32) -> Result<Vec<u8>, Errno> {
-        let file = self.files.get(&ino).ok_or(Errno::ENOENT)?;
+        let (ciphertext, expected_size) = {
+            let file = self.files.get(&ino).ok_or(Errno::ENOENT)?;
+            (file.data.clone(), file.plaintext_size)
+        };
+
+        let plaintext = self.crypto.decrypt(&ciphertext).map_err(|_| Errno::EIO)?;
+
+        if plaintext.len() != expected_size {
+            return Err(Errno::EIO);
+        }
 
         let start = usize::try_from(offset).map_err(|_| Errno::EINVAL)?;
 
-        if start >= file.data.len() {
+        if start >= plaintext.len() {
             return Ok(Vec::new());
         }
 
-        let end = start.saturating_add(size as usize).min(file.data.len());
-
-        Ok(file.data[start..end].to_vec())
+        let end = start.saturating_add(size as usize).min(plaintext.len());
+        Ok(plaintext[start..end].to_vec())
     }
 
     fn file_attr(&self, ino: u64) -> Option<FileAttr> {
         let file = self.files.get(&ino)?;
-        let size = file.data.len() as u64;
+        let size = file.plaintext_size as u64;
 
         Some(FileAttr {
             ino: INodeNo(ino),
@@ -242,6 +295,18 @@ impl Filesystem for VirtualFS {
             }
         };
 
+        if let Some(size) = size {
+            let Ok(new_size) = usize::try_from(size) else {
+                reply.error(Errno::EINVAL);
+                return;
+            };
+
+            if let Err(err) = state.resize_file(ino.0, new_size) {
+                reply.error(err);
+                return;
+            }
+        }
+
         {
             let Some(file) = state.files.get_mut(&ino.0) else {
                 reply.error(Errno::ENOENT);
@@ -258,15 +323,6 @@ impl Filesystem for VirtualFS {
 
             if let Some(gid) = gid {
                 file.gid = gid;
-            }
-
-            if let Some(size) = size {
-                let Ok(new_size) = usize::try_from(size) else {
-                    reply.error(Errno::EINVAL);
-                    return;
-                };
-
-                file.data.resize(new_size, 0);
             }
 
             if let Some(atime) = atime {
@@ -533,6 +589,47 @@ mod tests {
         assert_eq!(attr.kind, FileType::RegularFile);
         assert_eq!(attr.uid, 1000);
         assert_eq!(attr.gid, 1000);
+    }
+
+    #[test]
+    fn test_file_storage_contains_ciphertext() {
+        let mut state = FsState::new();
+        let ino = state
+            .create_file("encrypted.txt", 0o600, 1000, 1000)
+            .unwrap();
+        let plaintext = b"QuantumVault secret data";
+
+        state.write_file(ino, 0, plaintext).unwrap();
+
+        let stored = &state.files.get(&ino).unwrap().data;
+        assert_ne!(stored.as_slice(), plaintext);
+        assert_eq!(stored.len(), plaintext.len() + 28);
+        assert_eq!(state.read_file(ino, 0, 100).unwrap(), plaintext);
+    }
+
+    #[test]
+    fn test_tampered_file_is_rejected() {
+        let mut state = FsState::new();
+        let ino = state
+            .create_file("tampered.txt", 0o600, 1000, 1000)
+            .unwrap();
+
+        state.write_file(ino, 0, b"Sensitive data").unwrap();
+        state.files.get_mut(&ino).unwrap().data[12] ^= 1;
+
+        assert!(matches!(state.read_file(ino, 0, 100), Err(Errno::EIO)));
+    }
+
+    #[test]
+    fn test_encrypted_file_resize() {
+        let mut state = FsState::new();
+        let ino = state.create_file("resize.txt", 0o600, 1000, 1000).unwrap();
+
+        state.write_file(ino, 0, b"HelloWorld").unwrap();
+        state.resize_file(ino, 5).unwrap();
+
+        assert_eq!(state.read_file(ino, 0, 100).unwrap(), b"Hello");
+        assert_eq!(state.file_attr(ino).unwrap().size, 5);
     }
 
     #[test]
