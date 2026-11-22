@@ -4,7 +4,11 @@ mod ffi;
 use crate::crypto::{CryptoProvider, FfiCryptoProvider};
 use std::collections::BTreeMap;
 use std::ffi::OsStr;
+use std::fs::{self, File};
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use fuser::{
@@ -14,6 +18,8 @@ use fuser::{
 };
 const TTL: Duration = Duration::from_secs(1);
 const ROOT_INODE: u64 = 1;
+
+static STORAGE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 struct VirtualFile {
     name: String,
@@ -32,16 +38,48 @@ struct FsState {
     files: BTreeMap<u64, VirtualFile>,
     next_inode: u64,
     crypto: FfiCryptoProvider,
+    storage_dir: PathBuf,
 }
 
 impl FsState {
     fn new() -> Self {
+        let id = STORAGE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let storage_dir =
+            std::env::temp_dir().join(format!("quantumvault-pqc-{}-{}", std::process::id(), id));
+
+        fs::create_dir_all(&storage_dir).expect("Failed to create QuantumVault backing storage");
+
+        println!("QuantumVault backing storage: {}", storage_dir.display());
+
         Self {
             files: BTreeMap::new(),
             next_inode: 2,
             crypto: FfiCryptoProvider::new()
                 .expect("Failed to initialize QuantumVault crypto backend"),
+            storage_dir,
         }
+    }
+
+    fn persist_ciphertext(&self, ino: u64, ciphertext: &[u8]) -> Result<(), Errno> {
+        let destination = self.storage_dir.join(format!("{ino}.qv"));
+        let temporary = self.storage_dir.join(format!(
+            ".{ino}.{}.tmp",
+            STORAGE_COUNTER.fetch_add(1, Ordering::Relaxed)
+        ));
+
+        let result = (|| {
+            let mut file = File::create(&temporary).map_err(|_| Errno::EIO)?;
+            file.write_all(ciphertext).map_err(|_| Errno::EIO)?;
+            file.sync_all().map_err(|_| Errno::EIO)?;
+            fs::rename(&temporary, &destination).map_err(|_| Errno::EIO)?;
+            Ok(())
+        })();
+
+        if result.is_err() {
+            let _ = fs::remove_file(&temporary);
+        }
+
+        result
     }
 
     fn create_file(&mut self, name: &str, mode: u16, uid: u32, gid: u32) -> Result<u64, Errno> {
@@ -57,6 +95,8 @@ impl FsState {
 
         let ino = self.next_inode;
         self.next_inode = self.next_inode.checked_add(1).ok_or(Errno::EIO)?;
+
+        self.persist_ciphertext(ino, &encrypted_empty)?;
 
         let now = SystemTime::now();
 
@@ -108,6 +148,8 @@ impl FsState {
 
         let encrypted = self.crypto.encrypt(&plaintext).map_err(|_| Errno::EIO)?;
 
+        self.persist_ciphertext(ino, &encrypted)?;
+
         let file = self.files.get_mut(&ino).ok_or(Errno::ENOENT)?;
         file.data = encrypted;
         file.plaintext_size = plaintext.len();
@@ -129,6 +171,8 @@ impl FsState {
 
         plaintext.resize(new_size, 0);
         let encrypted = self.crypto.encrypt(&plaintext).map_err(|_| Errno::EIO)?;
+
+        self.persist_ciphertext(ino, &encrypted)?;
 
         let file = self.files.get_mut(&ino).ok_or(Errno::ENOENT)?;
         file.data = encrypted;
@@ -604,7 +648,45 @@ mod tests {
         let stored = &state.files.get(&ino).unwrap().data;
         assert_ne!(stored.as_slice(), plaintext);
         assert_eq!(stored.len(), plaintext.len() + 28);
+
+        let disk_path = state.storage_dir.join(format!("{ino}.qv"));
+        let disk_contents = fs::read(disk_path).unwrap();
+
+        assert_eq!(disk_contents, *stored);
+        assert_ne!(disk_contents.as_slice(), plaintext);
         assert_eq!(state.read_file(ino, 0, 100).unwrap(), plaintext);
+    }
+
+    #[test]
+    fn test_empty_write_does_not_change_stored_ciphertext() {
+        let mut state = FsState::new();
+        let ino = state.create_file("empty.txt", 0o600, 1000, 1000).unwrap();
+
+        let before = fs::read(state.storage_dir.join(format!("{ino}.qv"))).unwrap();
+        assert_eq!(state.write_file(ino, 0, b"").unwrap(), 0);
+        let after = fs::read(state.storage_dir.join(format!("{ino}.qv"))).unwrap();
+
+        assert_eq!(before, after);
+        assert_eq!(state.read_file(ino, 0, 10).unwrap(), b"");
+    }
+
+    #[test]
+    fn test_invalid_write_inputs() {
+        let mut state = FsState::new();
+
+        assert!(matches!(
+            state.write_file(999, 0, b"data"),
+            Err(Errno::ENOENT)
+        ));
+
+        let ino = state
+            .create_file("invalid-write.txt", 0o600, 1000, 1000)
+            .unwrap();
+
+        assert!(matches!(
+            state.write_file(ino, u64::MAX, b"data"),
+            Err(Errno::EINVAL)
+        ));
     }
 
     #[test]
