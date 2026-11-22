@@ -75,3 +75,24 @@ message could be read back through the mounted filesystem while
 the backing storage contained encrypted binary data.
 
 The exact plaintext was not found in the backing file.
+
+## Additional Live FUSE Test — 23 November 2026
+
+Mount directory: /home/codespace/quantumvault-mnt
+
+Test file: test.txt
+
+Test message: QuantumVault Encryption Test 2026
+
+Observed results:
+- File creation through the live FUSE mount: PASS
+- Reading the original plaintext through FUSE: PASS
+- Backing storage file created: 2.qv
+- Backing file size: 62 bytes
+- Exact plaintext search in the backing file: No match found
+
+Conclusion:
+The live FUSE write/read test succeeded, and the exact test
+plaintext was not found in the backing storage file.
+
+This test verifies ciphertext-at-rest for this session only.
