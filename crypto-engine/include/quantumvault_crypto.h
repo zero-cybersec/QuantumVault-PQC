@@ -65,6 +65,36 @@ int qv_mlkem768_decaps(
     size_t shared_secret_capacity
 );
 
+/* ML-DSA-65 digital signature API */
+#define QV_MLDSA65_PUBLIC_KEY_SIZE 1952
+#define QV_MLDSA65_SECRET_KEY_SIZE 4032
+#define QV_MLDSA65_SIGNATURE_SIZE 3309
+
+int qv_mldsa65_keypair(
+    uint8_t *public_key,
+    size_t public_key_capacity,
+    uint8_t *secret_key,
+    size_t secret_key_capacity
+);
+
+int qv_mldsa65_sign(
+    const uint8_t *message,
+    size_t message_len,
+    const uint8_t *secret_key,
+    size_t secret_key_len,
+    uint8_t *signature,
+    size_t signature_capacity
+);
+
+int qv_mldsa65_verify(
+    const uint8_t *message,
+    size_t message_len,
+    const uint8_t *signature,
+    size_t signature_len,
+    const uint8_t *public_key,
+    size_t public_key_len
+);
+
 #ifdef __cplusplus
 }
 #endif
