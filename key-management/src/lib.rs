@@ -104,3 +104,4 @@ mod tests {
 
 pub mod oqs;
 pub mod service;
+pub mod signature_keys;
