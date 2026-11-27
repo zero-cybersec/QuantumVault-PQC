@@ -32,6 +32,27 @@ ML-DSA-65 successfully integrated with:
 - AES-256-GCM
 - ML-KEM-768
 
+## Signature Integrity Testing
+
+Additional ML-DSA-65 signature integrity tests:
+
+- Valid signature accepted
+- Modified message rejected
+- Modified signature rejected
+
+### Test Coverage
+
+The verification API was tested against:
+- Original valid signature
+- Signature generated for original message
+- Modified message
+- Tampered signature (first byte modified)
+
+Result:
+- All signature integrity tests passed.
+- Modified signatures were rejected.
+- No test failures reported.
+
 Shared library:
 `/tmp/libquantumvault_crypto.so`
 

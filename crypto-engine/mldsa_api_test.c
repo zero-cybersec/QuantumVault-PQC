@@ -54,6 +54,18 @@ int main(void)
     }
 
     printf("PASS: Modified message rejected\n");
+    /* Test corrupted signature rejection */
+    signature[0] ^= 0x01;
+
+    if (qv_mldsa65_verify(
+            message, sizeof(message) - 1,
+            signature, sizeof(signature),
+            public_key, sizeof(public_key)) == 0) {
+        printf("FAIL: Modified signature accepted\n");
+        return 1;
+    }
+
+    printf("PASS: Modified signature rejected\n");
 
     OQS_MEM_cleanse(secret_key, sizeof(secret_key));
 
