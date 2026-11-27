@@ -37,4 +37,29 @@ The module should handle missing keys, duplicate key IDs, invalid key data, and 
 
 ## Conclusion
 This design provides the required key management structure for ML-DSA-65 digital signatures in QuantumVault-PQC.
-EOF
+
+
+## Secure ML_DSA Secret-Key Storage and Retrieval
+
+### 1. Secure Storage 
+- Secret keys must never be stored in plain text.
+- Secret keys should be encrypted before being stored permanently.
+- Encryption keys must be protected separately from stored secret keys.
+- Only authorized components should access secret-key storage.
+
+### 2. Key Retrieval and Access Control
+- Only authenticated and authorized users or services can request key access.
+- Secret keys should be retrieved only when required for signing.
+- Public keys can be accessed separately for signature verificatin.
+- Secret keys must never be exposed through logs or error messages.
+
+### 3. Key Lifecycle
+1. Generate the ML-DSA-65 key pair.
+2. Encrypt and securely store the secret key.
+3. Retrieve the secret key onlyfor authorized signing operations.
+4. Use the key for signing.
+5. Clear sensitive key data from memory after use where possible.
+6. Revoke or delete keys when they are no longer required.
+
+### 4. Implementation Status
+This section defines the secure storage and access-control design.Encrypted persistent storage and secure memory handling are requirements for future implementation. The current in-memory key store is a basic prototype and does not yet provide these protections.
