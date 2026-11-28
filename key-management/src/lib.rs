@@ -1,4 +1,5 @@
 pub mod storage;
+pub mod secure_storage;
 // QuantumVault-PQC Key Management Module
 use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

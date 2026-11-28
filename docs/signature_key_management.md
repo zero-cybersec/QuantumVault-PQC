@@ -63,3 +63,28 @@ This design provides the required key management structure for ML-DSA-65 digital
 
 ### 4. Implementation Status
 This section defines the secure storage and access-control design.Encrypted persistent storage and secure memory handling are requirements for future implementation. The current in-memory key store is a basic prototype and does not yet provide these protections.
+
+## Day 14 – Secure Key Handling and Access Restrictions
+
+### Access Restrictions
+- Only authorized components can retrieve secret keys.
+- Secret keys must be accessed only when required for signing operations.
+- Public keys can be shared for signature verification.
+- Unauthorized access requests must be rejected.
+- Secret keys must never be displayed in logs or error messages.
+
+### Secure Key Handling
+- Secret keys must be encrypted before persistent storage.
+- XChaCha20-Poly1305 authenticated encryption is used in the secure storage prototype.
+- Incorrect encryption keys must result in decryption failure.
+- Modified or corrupted ciphertext must be rejected.
+- Sensitive key data should be cleared from memory after use.
+
+### Security Testing
+- Encryption and decryption test passed.
+- Incorrect encryption key test passed.
+- Tampered ciphertext test passed.
+- Total key-management tests passed: 23.
+
+### Implementation Note
+The current secure storage module provides encryption and decryption functionality. Production deployment still requires secure encryption-key management, unique nonce generation, persistent storage integration, and authorization enforcement.
